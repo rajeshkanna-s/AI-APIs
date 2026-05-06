@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ComponentType, FormEvent } from 'react'
 import {
+  ArrowUp,
   Bot,
   CheckCircle2,
+  ChevronDown,
   Code2,
   Copy,
   Database,
@@ -10,9 +12,9 @@ import {
   LayoutDashboard,
   Loader2,
   MessageSquare,
+  PanelLeft,
   Plus,
   Save,
-  Send,
   Trash2,
 } from 'lucide-react'
 import './App.css'
@@ -96,6 +98,7 @@ function App() {
   const [modelForm, setModelForm] = useState(defaultModelForm)
   const [tokenForm, setTokenForm] = useState(defaultTokenForm)
   const [result, setResult] = useState<ChatResult | null>(null)
+  const [submittedPrompt, setSubmittedPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -111,16 +114,6 @@ function App() {
   const providerTokenSlots = useMemo(
     () => tokenSlots.filter((slot) => slot.provider === selectedProvider),
     [selectedProvider, tokenSlots],
-  )
-
-  const selectedModel = useMemo(
-    () => providerModels.find((model) => model.id === selectedModelId),
-    [providerModels, selectedModelId],
-  )
-
-  const selectedTokenSlot = useMemo(
-    () => providerTokenSlots.find((slot) => slot.id === selectedTokenSlotId),
-    [providerTokenSlots, selectedTokenSlotId],
   )
 
   const activeModels = providerModels.filter((model) => model.active)
@@ -256,6 +249,7 @@ function App() {
     setLoading(true)
     setError('')
     setResult(null)
+    setSubmittedPrompt(prompt)
 
     try {
       const response = await fetch(functionUrl, {
@@ -430,13 +424,19 @@ function App() {
       <aside className="sidebar">
         <div className="brand-block">
           <div className="brand-mark">
-            <Bot size={22} />
+            <span>API</span>
           </div>
-          <div>
-            <strong>AI API</strong>
-            <span>Supabase proxy</span>
-          </div>
+          <button className="sidebar-toggle" type="button" aria-label="Collapse sidebar">
+            <PanelLeft size={18} />
+          </button>
         </div>
+
+        <button className="new-chat-button" type="button" onClick={() => setActivePage('chat')}>
+          <Plus size={18} />
+          New Chat
+          <kbd>Ctrl</kbd>
+          <kbd>K</kbd>
+        </button>
 
         <nav className="side-nav" aria-label="Primary">
           {navItems.map((item) => {
@@ -459,40 +459,42 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <span>Endpoint</span>
+          <span>AI API Console</span>
           <strong>{new URL(functionUrl).hostname}</strong>
         </div>
       </aside>
 
       <section className="app-content">
-        <header className="page-header">
-          <div>
-            <span className="section-label">{currentPage.description}</span>
-            <h1>{currentPage.label}</h1>
-          </div>
-          <div className="header-actions">
-            <div className="provider-switch" role="group" aria-label="Provider">
-              {providers.map((provider) => (
-                <button
-                  className={selectedProvider === provider ? 'active' : ''}
-                  key={provider}
-                  type="button"
-                  onClick={() => changeProvider(provider)}
-                >
-                  {provider === 'nvidia' ? 'NVIDIA' : 'OpenRouter'}
-                </button>
-              ))}
+        {activePage !== 'chat' && (
+          <header className="page-header">
+            <div>
+              <span className="section-label">{currentPage.description}</span>
+              <h1>{currentPage.label}</h1>
             </div>
-            <div className="status-pill">
-              <Database size={17} />
-              {activeModels.length}/{providerModels.length} models
+            <div className="header-actions">
+              <div className="provider-switch" role="group" aria-label="Provider">
+                {providers.map((provider) => (
+                  <button
+                    className={selectedProvider === provider ? 'active' : ''}
+                    key={provider}
+                    type="button"
+                    onClick={() => changeProvider(provider)}
+                  >
+                    {provider === 'nvidia' ? 'NVIDIA' : 'OpenRouter'}
+                  </button>
+                ))}
+              </div>
+              <div className="status-pill">
+                <Database size={17} />
+                {activeModels.length}/{providerModels.length} models
+              </div>
+              <div className="status-pill">
+                <KeyRound size={17} />
+                {activeTokens.length}/{providerTokenSlots.length} tokens
+              </div>
             </div>
-            <div className="status-pill">
-              <KeyRound size={17} />
-              {activeTokens.length}/{providerTokenSlots.length} tokens
-            </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         <div className="mobile-tabs" aria-label="Primary mobile">
           {navItems.map((item) => {
@@ -566,24 +568,87 @@ function App() {
         )}
 
         {activePage === 'chat' && (
-          <form className="page-grid chat-page" onSubmit={runChat}>
-            <section className="panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="section-label">Test API</span>
-                  <h2>Chat request</h2>
-                </div>
-                <button className="btn btn-dark icon-btn" disabled={loading} type="submit">
-                  {loading ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
-                  Run
+          <form className="chat-workspace" onSubmit={runChat}>
+            <div className="chat-titlebar">
+              <button className="chat-title-button" type="button">
+                Test API Power Chat
+                <ChevronDown size={16} />
+              </button>
+              <div className="chat-provider-pills">
+                <button
+                  className={selectedProvider === 'nvidia' ? 'active' : ''}
+                  type="button"
+                  onClick={() => changeProvider('nvidia')}
+                >
+                  NVIDIA
+                </button>
+                <button
+                  className={selectedProvider === 'openrouter' ? 'active' : ''}
+                  type="button"
+                  onClick={() => changeProvider('openrouter')}
+                >
+                  OpenRouter
                 </button>
               </div>
+            </div>
 
-              <div className="control-row">
-                <label className="form-label">
-                  Model
+            <section className="chat-canvas" aria-live="polite">
+              <div className="assistant-row">
+                <div className="assistant-avatar">
+                  <Bot size={18} />
+                </div>
+                <div className="assistant-message">Hello! How can I help you today?</div>
+              </div>
+
+              {(submittedPrompt || loading || result?.content) && (
+                <div className="user-row">
+                  <div className="user-message">{submittedPrompt || prompt}</div>
+                </div>
+              )}
+
+              {loading && (
+                <div className="assistant-row">
+                  <div className="assistant-avatar">
+                    <Loader2 className="spin" size={18} />
+                  </div>
+                  <div className="assistant-message thinking">Running {selectedProvider}...</div>
+                </div>
+              )}
+
+              {result?.content && (
+                <div className="assistant-card">
+                  <div className="assistant-card-meta">
+                    <span>{result.provider ?? selectedProvider}</span>
+                    <span>{result.model}</span>
+                    <span>{result.tokenSlot}</span>
+                  </div>
+                  <pre>{result.content}</pre>
+                  {result.usage && (
+                    <div className="usage-row">
+                      <span>Prompt {result.usage.prompt_tokens ?? 0}</span>
+                      <span>Completion {result.usage.completion_tokens ?? 0}</span>
+                      <span>Total {result.usage.total_tokens ?? 0}</span>
+                    </div>
+                  )}
+                  {renderFallback()}
+                </div>
+              )}
+            </section>
+
+            <section className="chat-composer">
+              <textarea
+                aria-label="Prompt"
+                placeholder="Ask away. API models work too."
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+              />
+              <div className="composer-controls">
+                <button className="round-tool" type="button" aria-label="New prompt">
+                  <Plus size={22} />
+                </button>
+                <div className="composer-selects">
                   <select
-                    className="form-select"
+                    aria-label="Model"
                     value={selectedModelId}
                     onChange={(event) => setSelectedModelId(event.target.value)}
                   >
@@ -593,37 +658,26 @@ function App() {
                       </option>
                     ))}
                   </select>
-                </label>
-                <label className="form-label">
-                  Token slot
                   <select
-                    className="form-select"
+                    aria-label="Token slot"
                     value={selectedTokenSlotId}
                     onChange={(event) => setSelectedTokenSlotId(event.target.value)}
                   >
                     {providerTokenSlots.map((slot) => (
                       <option key={slot.id} value={slot.id}>
-                        {slot.display_name} ({slot.secret_name})
+                        {slot.display_name}
                       </option>
                     ))}
                   </select>
-                </label>
-              </div>
-
-              <label className="form-label">
-                Prompt
-                <textarea
-                  className="form-control prompt-box"
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                />
-              </label>
-
-              <div className="control-row three">
-                <label className="form-label">
-                  Temperature
                   <input
-                    className="form-control"
+                    aria-label="Max tokens"
+                    min="1"
+                    type="number"
+                    value={maxTokens}
+                    onChange={(event) => setMaxTokens(Number(event.target.value))}
+                  />
+                  <input
+                    aria-label="Temperature"
                     max="2"
                     min="0"
                     step="0.1"
@@ -631,11 +685,8 @@ function App() {
                     value={temperature}
                     onChange={(event) => setTemperature(Number(event.target.value))}
                   />
-                </label>
-                <label className="form-label">
-                  Top P
                   <input
-                    className="form-control"
+                    aria-label="Top P"
                     max="1"
                     min="0"
                     step="0.1"
@@ -643,47 +694,11 @@ function App() {
                     value={topP}
                     onChange={(event) => setTopP(Number(event.target.value))}
                   />
-                </label>
-                <label className="form-label">
-                  Max tokens
-                  <input
-                    className="form-control"
-                    min="1"
-                    step="1"
-                    type="number"
-                    value={maxTokens}
-                    onChange={(event) => setMaxTokens(Number(event.target.value))}
-                  />
-                </label>
-              </div>
-            </section>
-
-            <section className="panel result-panel">
-              <div className="panel-heading">
-                <div>
-                  <span className="section-label">Response</span>
-                  <h2>Output</h2>
                 </div>
+                <button className="send-fab" disabled={loading} type="submit" aria-label="Run">
+                  {loading ? <Loader2 className="spin" size={22} /> : <ArrowUp size={22} />}
+                </button>
               </div>
-              <div className="selection-strip">
-                <span>{selectedModel?.name ?? 'No model selected'}</span>
-                <span>{selectedTokenSlot?.display_name ?? 'No token selected'}</span>
-              </div>
-              <div className="response-box">
-                {result?.content ? (
-                  <pre>{result.content}</pre>
-                ) : (
-                  <span className="muted-text">Response will appear here.</span>
-                )}
-              </div>
-              {result?.usage && (
-                <div className="usage-row">
-                  <span>Prompt {result.usage.prompt_tokens ?? 0}</span>
-                  <span>Completion {result.usage.completion_tokens ?? 0}</span>
-                  <span>Total {result.usage.total_tokens ?? 0}</span>
-                </div>
-              )}
-              {renderFallback()}
             </section>
           </form>
         )}
