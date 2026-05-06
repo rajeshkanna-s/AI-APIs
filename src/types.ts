@@ -51,3 +51,17 @@ export type ChatResult = {
     }>
   }
 }
+
+export type CustomApiBuildResult = {
+  name: string
+  slug: string
+  apiUrl: string
+  accessToken: string
+  curl: string
+  limits: {
+    tokens: number
+    models: number
+    maxLoops: number
+  }
+  error?: string
+}

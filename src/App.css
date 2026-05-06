@@ -661,6 +661,53 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.custom-builder-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.7fr);
+}
+
+.custom-builder-panel,
+.custom-result-panel {
+  align-self: start;
+}
+
+.builder-textarea {
+  min-height: 118px;
+  resize: vertical;
+}
+
+.custom-result {
+  display: grid;
+  gap: 14px;
+}
+
+.custom-result code {
+  background: #f4f7fb;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  color: #0f172a;
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+}
+
+.empty-builder-state {
+  background: #f7f7f7;
+  border: 1px solid #e5e5e5;
+  border-radius: 8px;
+  color: #555555;
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+}
+
+.empty-builder-state strong {
+  color: #111111;
+}
+
 .fallback-box {
   background: #fff7ed;
   border: 1px solid #fed7aa;
@@ -852,7 +899,8 @@ h3 {
 
   .chat-page,
   .route-grid,
-  .curl-grid {
+  .curl-grid,
+  .custom-builder-grid {
     grid-template-columns: 1fr;
   }
 }

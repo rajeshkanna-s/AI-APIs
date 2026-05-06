@@ -83,3 +83,15 @@ For a specific token slot, send `tokenSlotId` from the `ai_api_token_slots` tabl
 If the requested model or token fails, the same curl still returns the first successful fallback route. The JSON response includes `fallback.attempts` so you can see which model/token combinations were skipped.
 
 For speed, each provider attempt has `attempt_timeout_ms`. The default curl uses `10000`, so a slow/hung model route fails over quickly. Use a higher value up to `60000` for longer answers.
+
+## Build Custom API
+
+The `Build Custom API` page creates a single Supabase API endpoint from a user's own provider URL, curl sample, input/output samples, up to 20 tokens, and up to 50 priority models.
+
+The generated endpoint is:
+
+```bash
+https://wuvgoqjxvnbihwiijzfb.supabase.co/functions/v1/custom-api/{slug}
+```
+
+It returns one generated client token. Requests rotate through configured models and tokens in priority order, with a maximum of two full loops before stopping. The custom API stores only the builder configuration in `public.ai_api_custom_builds`; runtime prompts and responses are not saved.

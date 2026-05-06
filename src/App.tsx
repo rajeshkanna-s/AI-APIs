@@ -19,7 +19,13 @@ import {
 } from 'lucide-react'
 import './App.css'
 import { supabase, supabasePublishableKey, supabaseUrl } from './lib/supabase'
-import type { AiModel, ChatResult, ProviderUrl, TokenSlot } from './types'
+import type {
+  AiModel,
+  ChatResult,
+  CustomApiBuildResult,
+  ProviderUrl,
+  TokenSlot,
+} from './types'
 
 const providers = ['nvidia', 'openrouter'] as const
 type ProviderKey = (typeof providers)[number]
@@ -41,7 +47,7 @@ const defaultTokenForm = {
   active: true,
 }
 
-type PageKey = 'overview' | 'chat' | 'models' | 'tokens' | 'curl'
+type PageKey = 'overview' | 'chat' | 'custom' | 'models' | 'tokens' | 'curl'
 
 type NavItem = {
   key: PageKey
@@ -62,6 +68,12 @@ const navItems: NavItem[] = [
     label: 'Chat',
     description: 'Test the Edge API',
     icon: MessageSquare,
+  },
+  {
+    key: 'custom',
+    label: 'Build Custom API',
+    description: 'Combine tokens and models',
+    icon: Code2,
   },
   {
     key: 'models',
@@ -98,6 +110,27 @@ function App() {
   const [modelForm, setModelForm] = useState(defaultModelForm)
   const [tokenForm, setTokenForm] = useState(defaultTokenForm)
   const [result, setResult] = useState<ChatResult | null>(null)
+  const [customName, setCustomName] = useState('Gemini Combined API')
+  const [customEndpointUrl, setCustomEndpointUrl] = useState(
+    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  )
+  const [customAuthHeaderName, setCustomAuthHeaderName] = useState('Authorization')
+  const [customAuthPrefix, setCustomAuthPrefix] = useState('Bearer')
+  const [customTokensText, setCustomTokensText] = useState(
+    'Gemini Token 1=PASTE_TOKEN_1\nGemini Token 2=PASTE_TOKEN_2',
+  )
+  const [customModelsText, setCustomModelsText] = useState(
+    'gemini-2.5-flash\ngemini-2.0-flash',
+  )
+  const [customSampleCurl, setCustomSampleCurl] = useState('')
+  const [customInputSample, setCustomInputSample] = useState(
+    '{\n  "prompt": "give roadmap for java developer"\n}',
+  )
+  const [customOutputSample, setCustomOutputSample] = useState(
+    '{\n  "content": "Java developer roadmap..."\n}',
+  )
+  const [customBuildResult, setCustomBuildResult] =
+    useState<CustomApiBuildResult | null>(null)
   const [submittedPrompt, setSubmittedPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -105,6 +138,7 @@ function App() {
   const [copied, setCopied] = useState(false)
 
   const functionUrl = `${supabaseUrl}/functions/v1/ai-chat`
+  const customCreateUrl = `${supabaseUrl}/functions/v1/custom-api/create`
 
   const providerModels = useMemo(
     () => models.filter((model) => model.provider === selectedProvider),
@@ -293,6 +327,74 @@ function App() {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       event.currentTarget.form?.requestSubmit()
+    }
+  }
+
+  const parseCustomTokens = () =>
+    customTokensText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 20)
+      .map((line, index) => {
+        const [name, ...valueParts] = line.includes('=')
+          ? line.split('=')
+          : [`Token ${index + 1}`, line]
+        return {
+          name: name.trim() || `Token ${index + 1}`,
+          value: valueParts.join('=').trim(),
+          priority: index + 1,
+          active: true,
+        }
+      })
+      .filter((token) => token.value)
+
+  const parseCustomModels = () =>
+    customModelsText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 50)
+      .map((line, index) => ({
+        name: line.replace(/^\d+[.)]\s*/, ''),
+        priority: index + 1,
+        active: true,
+      }))
+
+  const buildCustomApi = async (event: FormEvent) => {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    setCustomBuildResult(null)
+
+    try {
+      const response = await fetch(customCreateUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: supabasePublishableKey,
+          Authorization: `Bearer ${supabasePublishableKey}`,
+        },
+        body: JSON.stringify({
+          name: customName,
+          endpointUrl: customEndpointUrl,
+          authHeaderName: customAuthHeaderName,
+          authPrefix: customAuthPrefix,
+          tokens: parseCustomTokens(),
+          models: parseCustomModels(),
+          sampleCurl: customSampleCurl,
+          inputSample: customInputSample,
+          outputSample: customOutputSample,
+          maxLoops: 2,
+        }),
+      })
+      const json = (await response.json()) as CustomApiBuildResult
+      setCustomBuildResult(json)
+      if (!response.ok) setError(json.error ?? 'Custom API build failed')
+    } catch (buildError) {
+      setError(buildError instanceof Error ? buildError.message : 'Custom API build failed')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -790,6 +892,142 @@ function App() {
                 </tbody>
               </table>
             </div>
+          </section>
+        )}
+
+        {activePage === 'custom' && (
+          <section className="custom-builder-grid">
+            <form className="panel custom-builder-panel" onSubmit={buildCustomApi}>
+              <div className="panel-heading">
+                <div>
+                  <span className="section-label">One Supabase endpoint</span>
+                  <h2>Build Custom API</h2>
+                </div>
+                <button className="btn btn-dark icon-btn" disabled={saving} type="submit">
+                  {saving ? <Loader2 className="spin" size={18} /> : <Save size={18} />}
+                  Generate
+                </button>
+              </div>
+
+              <div className="control-row">
+                <label className="form-label">
+                  API name
+                  <input
+                    className="form-control"
+                    value={customName}
+                    onChange={(event) => setCustomName(event.target.value)}
+                  />
+                </label>
+                <label className="form-label">
+                  Provider URL
+                  <input
+                    className="form-control"
+                    value={customEndpointUrl}
+                    onChange={(event) => setCustomEndpointUrl(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="control-row">
+                <label className="form-label">
+                  Auth header
+                  <input
+                    className="form-control"
+                    value={customAuthHeaderName}
+                    onChange={(event) => setCustomAuthHeaderName(event.target.value)}
+                  />
+                </label>
+                <label className="form-label">
+                  Auth prefix
+                  <input
+                    className="form-control"
+                    value={customAuthPrefix}
+                    onChange={(event) => setCustomAuthPrefix(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <label className="form-label">
+                Tokens, one per line, up to 20
+                <textarea
+                  className="form-control builder-textarea"
+                  value={customTokensText}
+                  onChange={(event) => setCustomTokensText(event.target.value)}
+                />
+              </label>
+
+              <label className="form-label">
+                Models by priority, one per line, up to 50
+                <textarea
+                  className="form-control builder-textarea"
+                  value={customModelsText}
+                  onChange={(event) => setCustomModelsText(event.target.value)}
+                />
+              </label>
+
+              <label className="form-label">
+                Full curl or reference curl
+                <textarea
+                  className="form-control builder-textarea"
+                  value={customSampleCurl}
+                  onChange={(event) => setCustomSampleCurl(event.target.value)}
+                />
+              </label>
+
+              <div className="control-row">
+                <label className="form-label">
+                  Input sample
+                  <textarea
+                    className="form-control builder-textarea"
+                    value={customInputSample}
+                    onChange={(event) => setCustomInputSample(event.target.value)}
+                  />
+                </label>
+                <label className="form-label">
+                  Output sample
+                  <textarea
+                    className="form-control builder-textarea"
+                    value={customOutputSample}
+                    onChange={(event) => setCustomOutputSample(event.target.value)}
+                  />
+                </label>
+              </div>
+            </form>
+
+            <aside className="panel custom-result-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="section-label">Generated API</span>
+                  <h2>Supabase Link</h2>
+                </div>
+              </div>
+              {customBuildResult ? (
+                <div className="custom-result">
+                  <label className="form-label">
+                    API URL
+                    <code>{customBuildResult.apiUrl}</code>
+                  </label>
+                  <label className="form-label">
+                    Client API token
+                    <code>{customBuildResult.accessToken}</code>
+                  </label>
+                  <div className="usage-row">
+                    <span>{customBuildResult.limits.tokens} tokens</span>
+                    <span>{customBuildResult.limits.models} models</span>
+                    <span>{customBuildResult.limits.maxLoops} loops max</span>
+                  </div>
+                  <pre className="curl-block small-curl">{customBuildResult.curl}</pre>
+                </div>
+              ) : (
+                <div className="empty-builder-state">
+                  <strong>Ready to generate</strong>
+                  <span>
+                    The custom API will rotate through tokens and models in priority
+                    order. It stops after two full loops if every route fails.
+                  </span>
+                </div>
+              )}
+            </aside>
           </section>
         )}
 
