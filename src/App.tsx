@@ -110,25 +110,16 @@ function App() {
   const [modelForm, setModelForm] = useState(defaultModelForm)
   const [tokenForm, setTokenForm] = useState(defaultTokenForm)
   const [result, setResult] = useState<ChatResult | null>(null)
-  const [customName, setCustomName] = useState('Gemini Combined API')
-  const [customEndpointUrl, setCustomEndpointUrl] = useState(
-    'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-  )
+  const [customName, setCustomName] = useState('')
+  const [customEndpointUrl, setCustomEndpointUrl] = useState('')
   const [customAuthHeaderName, setCustomAuthHeaderName] = useState('Authorization')
   const [customAuthPrefix, setCustomAuthPrefix] = useState('Bearer')
-  const [customTokensText, setCustomTokensText] = useState(
-    'Gemini Token 1=PASTE_TOKEN_1\nGemini Token 2=PASTE_TOKEN_2',
-  )
-  const [customModelsText, setCustomModelsText] = useState(
-    'gemini-2.5-flash\ngemini-2.0-flash',
-  )
+  const [customTokensText, setCustomTokensText] = useState('')
+  const [customModelsText, setCustomModelsText] = useState('')
   const [customSampleCurl, setCustomSampleCurl] = useState('')
-  const [customInputSample, setCustomInputSample] = useState(
-    '{\n  "prompt": "give roadmap for java developer"\n}',
-  )
-  const [customOutputSample, setCustomOutputSample] = useState(
-    '{\n  "content": "Java developer roadmap..."\n}',
-  )
+  const [customInputSample, setCustomInputSample] = useState('')
+  const [customOutputSample, setCustomOutputSample] = useState('')
+  const [customValidationErrors, setCustomValidationErrors] = useState<string[]>([])
   const [customBuildResult, setCustomBuildResult] =
     useState<CustomApiBuildResult | null>(null)
   const [submittedPrompt, setSubmittedPrompt] = useState('')
@@ -361,8 +352,62 @@ function App() {
         active: true,
       }))
 
+  const applyCurlDetails = (curlText: string) => {
+    setCustomSampleCurl(curlText)
+
+    const urlMatch =
+      curlText.match(/curl\s+(?:--location\s+)?['"]([^'"]+)['"]/i) ??
+      curlText.match(/https?:\/\/[^\s'"\\]+/i)
+    const url = Array.isArray(urlMatch) ? urlMatch[1] ?? urlMatch[0] : ''
+    if (url) setCustomEndpointUrl(url.trim())
+
+    const headerMatches = Array.from(
+      curlText.matchAll(/(?:--header|-H)\s+['"]([^'"]+)['"]/gi),
+      (match) => match[1],
+    )
+    const authHeader = headerMatches.find((header) =>
+      /^authorization\s*:/i.test(header),
+    )
+
+    if (authHeader) {
+      const [headerName, ...rawValueParts] = authHeader.split(':')
+      const rawValue = rawValueParts.join(':').trim()
+      const [prefix, ...tokenParts] = rawValue.split(/\s+/)
+      const token = tokenParts.join(' ').trim()
+
+      setCustomAuthHeaderName(headerName.trim() || 'Authorization')
+      if (token) {
+        setCustomAuthPrefix(prefix)
+        setCustomTokensText((current) =>
+          current.trim() ? current : `Token 1=${token}`,
+        )
+      } else {
+        setCustomAuthPrefix('')
+        setCustomTokensText((current) =>
+          current.trim() ? current : `Token 1=${rawValue}`,
+        )
+      }
+    }
+  }
+
+  const validateCustomBuild = () => {
+    const nextErrors = []
+    if (!customName.trim()) nextErrors.push('API name is required.')
+    if (!customEndpointUrl.trim()) nextErrors.push('Provider URL is required.')
+    if (parseCustomTokens().length === 0) {
+      nextErrors.push('At least one provider token is required.')
+    }
+    if (parseCustomModels().length === 0) {
+      nextErrors.push('At least one model is required.')
+    }
+    setCustomValidationErrors(nextErrors)
+    return nextErrors.length === 0
+  }
+
   const buildCustomApi = async (event: FormEvent) => {
     event.preventDefault()
+    if (!validateCustomBuild()) return
+
     setSaving(true)
     setError('')
     setCustomBuildResult(null)
@@ -900,7 +945,7 @@ function App() {
             <form className="panel custom-builder-panel" onSubmit={buildCustomApi}>
               <div className="panel-heading">
                 <div>
-                  <span className="section-label">One Supabase endpoint</span>
+                  <span className="section-label">Required fields are marked</span>
                   <h2>Build Custom API</h2>
                 </div>
                 <button className="btn btn-dark icon-btn" disabled={saving} type="submit">
@@ -909,19 +954,51 @@ function App() {
                 </button>
               </div>
 
+              <div className="builder-steps">
+                <span>1. Paste curl</span>
+                <span>2. Add models</span>
+                <span>3. Generate endpoint</span>
+              </div>
+
+              {customValidationErrors.length > 0 && (
+                <div className="builder-errors">
+                  {customValidationErrors.map((validationError) => (
+                    <span key={validationError}>{validationError}</span>
+                  ))}
+                </div>
+              )}
+
+              <label className="form-label">
+                Full curl or API reference curl
+                <textarea
+                  className="form-control builder-textarea large"
+                  placeholder={`curl --location 'https://api.example.com/v1/chat/completions' \\
+--header 'Authorization: Bearer YOUR_TOKEN' \\
+--header 'Content-Type: application/json'`}
+                  value={customSampleCurl}
+                  onChange={(event) => applyCurlDetails(event.target.value)}
+                />
+                <small>
+                  Paste curl first. URL, auth header, auth prefix, and first token
+                  will be detected automatically.
+                </small>
+              </label>
+
               <div className="control-row">
                 <label className="form-label">
-                  API name
+                  API name *
                   <input
                     className="form-control"
+                    placeholder="Example: Gemini Combined API"
                     value={customName}
                     onChange={(event) => setCustomName(event.target.value)}
                   />
                 </label>
                 <label className="form-label">
-                  Provider URL
+                  Provider URL *
                   <input
                     className="form-control"
+                    placeholder="Auto-filled from curl, or paste provider chat URL"
                     value={customEndpointUrl}
                     onChange={(event) => setCustomEndpointUrl(event.target.value)}
                   />
@@ -933,6 +1010,7 @@ function App() {
                   Auth header
                   <input
                     className="form-control"
+                    placeholder="Authorization"
                     value={customAuthHeaderName}
                     onChange={(event) => setCustomAuthHeaderName(event.target.value)}
                   />
@@ -941,6 +1019,7 @@ function App() {
                   Auth prefix
                   <input
                     className="form-control"
+                    placeholder="Bearer"
                     value={customAuthPrefix}
                     onChange={(event) => setCustomAuthPrefix(event.target.value)}
                   />
@@ -948,49 +1027,59 @@ function App() {
               </div>
 
               <label className="form-label">
-                Tokens, one per line, up to 20
+                Tokens, one per line, up to 20 *
                 <textarea
                   className="form-control builder-textarea"
+                  placeholder={`Token 1=paste_token_here
+Token 2=paste_second_token_here`}
                   value={customTokensText}
                   onChange={(event) => setCustomTokensText(event.target.value)}
                 />
               </label>
 
               <label className="form-label">
-                Models by priority, one per line, up to 50
+                Models by priority, one per line, up to 50 *
                 <textarea
                   className="form-control builder-textarea"
+                  placeholder={`gemini-2.5-flash
+gemini-2.0-flash
+gemini-1.5-flash`}
                   value={customModelsText}
                   onChange={(event) => setCustomModelsText(event.target.value)}
                 />
               </label>
 
-              <label className="form-label">
-                Full curl or reference curl
-                <textarea
-                  className="form-control builder-textarea"
-                  value={customSampleCurl}
-                  onChange={(event) => setCustomSampleCurl(event.target.value)}
-                />
-              </label>
+              <details className="optional-builder">
+                <summary>Optional samples</summary>
+                <div className="control-row">
+                  <label className="form-label">
+                    Input sample
+                    <textarea
+                      className="form-control builder-textarea"
+                      placeholder={`{
+  "prompt": "give roadmap for java developer"
+}`}
+                      value={customInputSample}
+                      onChange={(event) => setCustomInputSample(event.target.value)}
+                    />
+                  </label>
+                  <label className="form-label">
+                    Output sample
+                    <textarea
+                      className="form-control builder-textarea"
+                      placeholder={`{
+  "content": "Java developer roadmap..."
+}`}
+                      value={customOutputSample}
+                      onChange={(event) => setCustomOutputSample(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </details>
 
-              <div className="control-row">
-                <label className="form-label">
-                  Input sample
-                  <textarea
-                    className="form-control builder-textarea"
-                    value={customInputSample}
-                    onChange={(event) => setCustomInputSample(event.target.value)}
-                  />
-                </label>
-                <label className="form-label">
-                  Output sample
-                  <textarea
-                    className="form-control builder-textarea"
-                    value={customOutputSample}
-                    onChange={(event) => setCustomOutputSample(event.target.value)}
-                  />
-                </label>
+              <div className="mandatory-note">
+                Mandatory: API name, provider URL, at least one token, and at
+                least one model. Everything else is optional.
               </div>
             </form>
 

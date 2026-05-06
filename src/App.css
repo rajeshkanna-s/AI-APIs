@@ -677,6 +677,72 @@ h3 {
   resize: vertical;
 }
 
+.builder-textarea.large {
+  min-height: 150px;
+}
+
+.form-label small {
+  color: #667085;
+  font-weight: 500;
+}
+
+.builder-steps {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.builder-steps span {
+  background: #f4f7fb;
+  border: 1px solid #dbe5ef;
+  border-radius: 8px;
+  color: #334155;
+  font-size: 0.88rem;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.builder-errors {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  color: #9f1239;
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.optional-builder {
+  border: 1px solid #e5eaf1;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+}
+
+.optional-builder summary {
+  color: #172033;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.optional-builder .control-row {
+  margin-top: 14px;
+}
+
+.mandatory-note {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 650;
+  padding: 12px;
+}
+
 .custom-result {
   display: grid;
   gap: 14px;
