@@ -2,6 +2,8 @@
 
 React + TypeScript + Bootstrap console for managing NVIDIA and OpenRouter chat models through a Supabase Edge Function.
 
+https://aiapiss.netlify.app/
+
 ## What is included
 
 - Frontend model selector, token-slot selector, prompt controls, response viewer, and generated curl.
