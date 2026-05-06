@@ -25,8 +25,10 @@ The project reads:
 
 ```bash
 VITE_SUPABASE_URL=https://wuvgoqjxvnbihwiijzfb.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_XwfSIwlW4c35Ejv4nwG6Dg_LkXaK4Z_
 ```
+
+These values have frontend-safe defaults in `src/lib/supabase.ts` so static hosts such as Netlify can render the app even when environment variables are not configured.
 
 ## Supabase deploy
 
