@@ -246,10 +246,14 @@ function App() {
 
   const runChat = async (event: FormEvent) => {
     event.preventDefault()
+    const outgoingPrompt = prompt.trim()
+    if (!outgoingPrompt || loading) return
+
     setLoading(true)
     setError('')
     setResult(null)
-    setSubmittedPrompt(prompt)
+    setSubmittedPrompt(outgoingPrompt)
+    setPrompt('')
 
     try {
       const response = await fetch(functionUrl, {
@@ -263,7 +267,7 @@ function App() {
           modelId: selectedModelId,
           provider: selectedProvider,
           tokenSlotId: selectedTokenSlotId,
-          prompt,
+          prompt: outgoingPrompt,
           temperature,
           top_p: topP,
           max_tokens: maxTokens,
@@ -282,6 +286,13 @@ function App() {
       setError(requestError instanceof Error ? requestError.message : 'Request failed')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handlePromptKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      event.currentTarget.form?.requestSubmit()
     }
   }
 
@@ -640,6 +651,7 @@ function App() {
                 aria-label="Prompt"
                 placeholder="Ask away. API models work too."
                 value={prompt}
+                onKeyDown={handlePromptKeyDown}
                 onChange={(event) => setPrompt(event.target.value)}
               />
               <div className="composer-controls">
