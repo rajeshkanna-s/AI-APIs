@@ -418,6 +418,15 @@
   max-width: 84px;
 }
 
+.composer-selects input.composer-api-key {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 0.84rem;
+  max-width: 170px;
+  padding: 4px 8px;
+}
+
 .page-header {
   justify-content: space-between;
   gap: 18px;

@@ -103,6 +103,7 @@ function App() {
   const [providerUrls, setProviderUrls] = useState<ProviderUrl[]>([])
   const [selectedModelId, setSelectedModelId] = useState('')
   const [selectedTokenSlotId, setSelectedTokenSlotId] = useState('')
+  const [directApiKey, setDirectApiKey] = useState('')
   const [prompt, setPrompt] = useState('give roadmap for java developer')
   const [temperature, setTemperature] = useState(0.2)
   const [topP, setTopP] = useState(0.7)
@@ -173,6 +174,7 @@ function App() {
         modelId: modelId || '<model-id>',
         modelName: selectedModelObj?.name,
         tokenSlotId: tokenSlotId || '<token-slot-id>',
+        ...(directApiKey.trim() ? { apiKey: directApiKey.trim() } : {}),
         prompt,
         temperature,
         top_p: topP,
@@ -188,6 +190,7 @@ function App() {
 --data '${JSON.stringify(payload, null, 2)}'`
     },
     [
+      directApiKey,
       functionUrl,
       maxTokens,
       models,
@@ -301,6 +304,7 @@ function App() {
         modelName: currentModel?.name,
         provider: selectedProvider,
         tokenSlotId: selectedTokenSlotId,
+        apiKey: directApiKey.trim() || undefined,
         prompt: outgoingPrompt,
         temperature,
         top_p: topP,
@@ -921,6 +925,15 @@ function App() {
                       </option>
                     ))}
                   </select>
+                  <input
+                    aria-label="Direct API Key"
+                    className="composer-api-key"
+                    placeholder="Key override (opt)"
+                    title="Direct provider API key override (optional)"
+                    type="password"
+                    value={directApiKey}
+                    onChange={(event) => setDirectApiKey(event.target.value)}
+                  />
                   <input
                     aria-label="Max tokens"
                     min="1"
