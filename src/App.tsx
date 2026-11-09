@@ -136,6 +136,13 @@ function App() {
     [models, selectedProvider],
   )
 
+  const sortedProviderModels = useMemo(() => {
+    return [...providerModels].sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1
+      return a.priority - b.priority
+    })
+  }, [providerModels])
+
   const providerTokenSlots = useMemo(
     () => tokenSlots.filter((slot) => slot.provider === selectedProvider),
     [selectedProvider, tokenSlots],
@@ -150,24 +157,28 @@ function App() {
 
   const createCurlCommand = useCallback(
     (provider: ProviderKey) => {
-      const firstModel = models.find((model) => model.provider === provider)
-      const firstTokenSlot = tokenSlots.find((slot) => slot.provider === provider)
+      const activeModel = models.find((model) => model.provider === provider && model.active)
+      const firstModel = activeModel || models.find((model) => model.provider === provider)
+      const activeTokenSlot = tokenSlots.find((slot) => slot.provider === provider && slot.active)
+      const firstTokenSlot = activeTokenSlot || tokenSlots.find((slot) => slot.provider === provider)
       const modelId =
         provider === selectedProvider ? selectedModelId || firstModel?.id : firstModel?.id
       const tokenSlotId =
         provider === selectedProvider
           ? selectedTokenSlotId || firstTokenSlot?.id
           : firstTokenSlot?.id
+      const selectedModelObj = models.find((m) => m.id === modelId)
       const payload = {
         provider,
         modelId: modelId || '<model-id>',
+        modelName: selectedModelObj?.name,
         tokenSlotId: tokenSlotId || '<token-slot-id>',
         prompt,
         temperature,
         top_p: topP,
-      max_tokens: maxTokens,
-      attempt_timeout_ms: 10000,
-      stream: false,
+        max_tokens: maxTokens,
+        attempt_timeout_ms: 10000,
+        stream: false,
       }
 
       return `curl --location '${functionUrl}' \\
@@ -251,13 +262,15 @@ function App() {
       const currentModel = nextModels.find((model) => model.id === current)
       return currentModel?.provider === selectedProvider
         ? current
-        : nextModels.find((model) => model.provider === selectedProvider)?.id || ''
+        : nextModels.find((model) => model.provider === selectedProvider && model.active)?.id ||
+          nextModels.find((model) => model.provider === selectedProvider)?.id || ''
     })
     setSelectedTokenSlotId((current) => {
       const currentSlot = nextTokenSlots.find((slot) => slot.id === current)
       return currentSlot?.provider === selectedProvider
         ? current
-        : nextTokenSlots.find((slot) => slot.provider === selectedProvider)?.id || ''
+        : nextTokenSlots.find((slot) => slot.provider === selectedProvider && slot.active)?.id ||
+          nextTokenSlots.find((slot) => slot.provider === selectedProvider)?.id || ''
     })
     setModelForm((current) => ({ ...current, priority: nextModels.length + 1 }))
     setTokenForm((current) => ({ ...current, priority: nextTokenSlots.length + 1 }))
@@ -281,27 +294,91 @@ function App() {
     setPrompt('')
 
     try {
-      const response = await fetch(functionUrl, {
+      const currentModel = models.find((m) => m.id === selectedModelId)
+
+      const payload = {
+        modelId: selectedModelId,
+        modelName: currentModel?.name,
+        provider: selectedProvider,
+        tokenSlotId: selectedTokenSlotId,
+        prompt: outgoingPrompt,
+        temperature,
+        top_p: topP,
+        max_tokens: maxTokens,
+        attempt_timeout_ms: 10000,
+        stream: false,
+      }
+
+      let response = await fetch(functionUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           apikey: supabasePublishableKey,
           Authorization: `Bearer ${supabasePublishableKey}`,
         },
-        body: JSON.stringify({
-          modelId: selectedModelId,
-          provider: selectedProvider,
-          tokenSlotId: selectedTokenSlotId,
-          prompt: outgoingPrompt,
-          temperature,
-          top_p: topP,
-          max_tokens: maxTokens,
-          attempt_timeout_ms: 10000,
-          stream: false,
-        }),
+        body: JSON.stringify(payload),
       })
 
-      const json = (await response.json()) as ChatResult
+      let json = (await response.json()) as ChatResult
+
+      // Cross-provider alternative failover:
+      // If the primary provider fails completely (e.g. all credentials invalid or all models down),
+      // seamlessly attempt the alternative provider so user request never gets blocked.
+      if (!response.ok) {
+        const altProvider: ProviderKey = selectedProvider === 'nvidia' ? 'openrouter' : 'nvidia'
+        const altModel = models.find((m) => m.provider === altProvider && m.active)
+        const altToken = tokenSlots.find((s) => s.provider === altProvider && s.active)
+
+        if (altModel) {
+          try {
+            const altResponse = await fetch(functionUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                apikey: supabasePublishableKey,
+                Authorization: `Bearer ${supabasePublishableKey}`,
+              },
+              body: JSON.stringify({
+                modelId: altModel.id,
+                modelName: altModel.name,
+                provider: altProvider,
+                tokenSlotId: altToken?.id,
+                prompt: outgoingPrompt,
+                temperature,
+                top_p: topP,
+                max_tokens: maxTokens,
+                attempt_timeout_ms: 10000,
+                stream: false,
+              }),
+            })
+
+            if (altResponse.ok) {
+              const altJson = (await altResponse.json()) as ChatResult
+              json = {
+                ...altJson,
+                fallback: {
+                  attempted: (json.fallback?.attempted || 0) + (altJson.fallback?.attempted || 1),
+                  latencyMs: (json.fallback?.latencyMs || 0) + (altJson.fallback?.latencyMs || 0),
+                  attemptTimeoutMs: altJson.fallback?.attemptTimeoutMs,
+                  switchedModel: true,
+                  switchedToken: true,
+                  switchedProvider: true,
+                  switchedFrom: selectedProvider,
+                  originalError: json.error,
+                  attempts: [
+                    ...(json.fallback?.attempts || []),
+                    ...(altJson.fallback?.attempts || []),
+                  ],
+                },
+              }
+              response = altResponse
+            }
+          } catch {
+            // Keep original response/error if alt also fails
+          }
+        }
+      }
+
       setResult(json)
 
       if (!response.ok) {
@@ -539,8 +616,14 @@ function App() {
 
   const changeProvider = (provider: ProviderKey) => {
     setSelectedProvider(provider)
-    setSelectedModelId(models.find((model) => model.provider === provider)?.id || '')
-    setSelectedTokenSlotId(tokenSlots.find((slot) => slot.provider === provider)?.id || '')
+    setSelectedModelId(
+      models.find((model) => model.provider === provider && model.active)?.id ||
+      models.find((model) => model.provider === provider)?.id || ''
+    )
+    setSelectedTokenSlotId(
+      tokenSlots.find((slot) => slot.provider === provider && slot.active)?.id ||
+      tokenSlots.find((slot) => slot.provider === provider)?.id || ''
+    )
     setModelForm((current) => ({
       ...current,
       provider,
@@ -556,18 +639,28 @@ function App() {
   const renderFallback = () =>
     result?.fallback ? (
       <div className="fallback-box">
+        {result.fallback.switchedProvider && (
+          <div className="provider-failover-badge">
+            ⚡ <strong>Cross-Provider Failover:</strong> Primary provider (
+            {result.fallback.switchedFrom?.toUpperCase()}) routes failed (
+            <em>{result.fallback.originalError}</em>). Automatically succeeded via{' '}
+            <strong>{result.provider?.toUpperCase()}</strong>!
+          </div>
+        )}
         <strong>
           Attempts {result.fallback.attempted}
+          {result.fallback.switchedProvider ? ' / provider switched' : ''}
           {result.fallback.switchedModel ? ' / model switched' : ''}
           {result.fallback.switchedToken ? ' / token switched' : ''}
           {result.fallback.latencyMs ? ` / ${result.fallback.latencyMs}ms` : ''}
         </strong>
-        {result.fallback.attempts.length > 0 ? (
+        {result.fallback.attempts && result.fallback.attempts.length > 0 ? (
           <ul>
             {result.fallback.attempts.map((attempt, index) => (
               <li key={`${attempt.model}-${attempt.tokenSlot}-${index}`}>
                 <span>{attempt.reason}</span>
                 {attempt.status}: {attempt.model} via {attempt.tokenSlot}
+                {attempt.error ? ` — ${attempt.error}` : ''}
               </li>
             ))}
           </ul>
@@ -811,9 +904,9 @@ function App() {
                     value={selectedModelId}
                     onChange={(event) => setSelectedModelId(event.target.value)}
                   >
-                    {providerModels.map((model) => (
+                    {sortedProviderModels.map((model) => (
                       <option key={model.id} value={model.id}>
-                        {model.priority}. {model.name}
+                        {model.priority}. {model.name} {model.active ? '' : '(Inactive)'}
                       </option>
                     ))}
                   </select>

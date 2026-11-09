@@ -42,6 +42,9 @@ export type ChatResult = {
     attemptTimeoutMs?: number
     switchedModel?: boolean
     switchedToken?: boolean
+    switchedProvider?: boolean
+    switchedFrom?: string
+    originalError?: string
     attempts: Array<{
       model: string
       tokenSlot: string
