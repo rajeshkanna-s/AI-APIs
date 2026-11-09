@@ -231,26 +231,26 @@ function App() {
       { data: tokenRows, error: tokenError },
       { data: providerUrlRows, error: providerUrlError },
     ] = await Promise.all([
-        supabase
-          .from('ai_api_models')
-          .select('id, priority, name, provider, active, max_tokens_limit, notes')
-          .order('priority', { ascending: true }),
-        supabase
-          .from('ai_api_token_slots')
-          .select('id, priority, display_name, secret_name, provider, active')
-          .order('priority', { ascending: true }),
-        supabase
-          .from('ai_api_provider_urls')
-          .select('id, provider, chat_completions_url, active')
-          .order('provider', { ascending: true }),
-      ])
+      supabase
+        .from('ai_api_models')
+        .select('id, priority, name, provider, active, max_tokens_limit, notes')
+        .order('priority', { ascending: true }),
+      supabase
+        .from('ai_api_token_slots')
+        .select('id, priority, display_name, secret_name, provider, active')
+        .order('priority', { ascending: true }),
+      supabase
+        .from('ai_api_provider_urls')
+        .select('id, provider, chat_completions_url, active')
+        .order('provider', { ascending: true }),
+    ])
 
     if (modelError || tokenError || providerUrlError) {
       setError(
         modelError?.message ??
-          tokenError?.message ??
-          providerUrlError?.message ??
-          'Failed to load data',
+        tokenError?.message ??
+        providerUrlError?.message ??
+        'Failed to load data',
       )
       return
     }
@@ -266,14 +266,14 @@ function App() {
       return currentModel?.provider === selectedProvider
         ? current
         : nextModels.find((model) => model.provider === selectedProvider && model.active)?.id ||
-          nextModels.find((model) => model.provider === selectedProvider)?.id || ''
+        nextModels.find((model) => model.provider === selectedProvider)?.id || ''
     })
     setSelectedTokenSlotId((current) => {
       const currentSlot = nextTokenSlots.find((slot) => slot.id === current)
       return currentSlot?.provider === selectedProvider
         ? current
         : nextTokenSlots.find((slot) => slot.provider === selectedProvider && slot.active)?.id ||
-          nextTokenSlots.find((slot) => slot.provider === selectedProvider)?.id || ''
+        nextTokenSlots.find((slot) => slot.provider === selectedProvider)?.id || ''
     })
     setModelForm((current) => ({ ...current, priority: nextModels.length + 1 }))
     setTokenForm((current) => ({ ...current, priority: nextTokenSlots.length + 1 }))
@@ -1020,9 +1020,8 @@ function App() {
                       <td>{model.provider}</td>
                       <td>
                         <button
-                          className={`btn btn-sm ${
-                            model.active ? 'btn-success' : 'btn-secondary'
-                          }`}
+                          className={`btn btn-sm ${model.active ? 'btn-success' : 'btn-secondary'
+                            }`}
                           type="button"
                           onClick={() => void toggleModel(model)}
                         >

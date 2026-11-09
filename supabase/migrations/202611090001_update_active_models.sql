@@ -85,3 +85,4 @@ on conflict (name) do update set
   provider = excluded.provider,
   active = excluded.active,
   notes = excluded.notes;
+
