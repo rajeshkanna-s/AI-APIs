@@ -32,6 +32,7 @@ type ChatRequest = {
   modelId?: string;
   modelName?: string;
   tokenSlotId?: string;
+  apiKey?: string;
   attempt_timeout_ms?: number;
   messages?: ChatMessage[];
   prompt?: string;
@@ -39,6 +40,7 @@ type ChatRequest = {
   top_p?: number;
   max_tokens?: number;
   stream?: boolean;
+  allow_provider_fallback?: boolean;
 };
 
 type TokenMap = Record<string, string>;
@@ -58,6 +60,7 @@ type TokenSlotRow = {
 };
 
 type AttemptLog = {
+  provider?: string;
   model: string;
   tokenSlot: string;
   status: number | "missing-secret" | "network-error" | "timeout";
@@ -111,10 +114,15 @@ const resolveProviderToken = (
   secretName: string,
   priority: number,
   tokenMap: TokenMap,
+  directApiKey?: string,
 ) =>
+  directApiKey ??
+  Deno.env.get(`${providerConfigs[provider].tokenSecretPrefix}_${priority}`) ??
+  Deno.env.get(`${provider.toUpperCase()}_API_KEY`) ??
+  Deno.env.get(`${provider.toUpperCase()}_API_TOKEN`) ??
+  Deno.env.get(`${provider.toUpperCase()}_KEY`) ??
   Deno.env.get(secretName) ??
   Deno.env.get(normalizeSecretName(secretName)) ??
-  Deno.env.get(`${providerConfigs[provider].tokenSecretPrefix}_${priority}`) ??
   tokenMap[secretName];
 
 const getProvider = (value: string | undefined): ProviderKey =>
@@ -208,21 +216,11 @@ Deno.serve(async (req) => {
   }
 
   const body = (await req.json()) as ChatRequest;
-  const provider = getProvider(body.provider);
-  const config = providerConfigs[provider];
-  const tokenMap = parseTokens(Deno.env.get(config.tokenMapSecret));
-  const hasNumberedToken = Array.from({ length: 20 }, (_, index) =>
-    Deno.env.get(`${config.tokenSecretPrefix}_${index + 1}`),
-  ).some(Boolean);
-
-  if (Object.keys(tokenMap).length === 0 && !hasNumberedToken) {
-    return jsonResponse(
-      {
-        error: `Missing ${config.tokenMapSecret} or ${config.tokenSecretPrefix}_N secret`,
-      },
-      500,
-    );
-  }
+  const initialProvider = getProvider(body.provider);
+  const providerCandidates: ProviderKey[] =
+    body.allow_provider_fallback === false
+      ? [initialProvider]
+      : [initialProvider, initialProvider === "nvidia" ? "openrouter" : "nvidia"];
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
@@ -237,221 +235,254 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Send messages[] or prompt" }, 400);
   }
 
-  const modelBaseQuery = () =>
-    supabase
-      .from("ai_api_models")
-      .select("id, name, priority, max_tokens_limit")
-      .eq("provider", provider)
-      .eq("active", true);
-
-  const tokenBaseQuery = () =>
-    supabase
-      .from("ai_api_token_slots")
-      .select("id, secret_name, display_name, priority")
-      .eq("provider", provider)
-      .eq("active", true);
-
-  const [
-    { data: activeModels, error: modelError },
-    { data: activeTokenSlots, error: tokenSlotError },
-  ] = await Promise.all([
-    modelBaseQuery().order("priority", { ascending: true }),
-    tokenBaseQuery().order("priority", { ascending: true }),
-  ]);
-
-  if (modelError || !activeModels || activeModels.length === 0) {
-    return jsonResponse({ error: "No active model found" }, 404);
-  }
-
-  if (
-    tokenSlotError ||
-    !activeTokenSlots ||
-    activeTokenSlots.length === 0
-  ) {
-    return jsonResponse({ error: "No active token slot found" }, 404);
-  }
-
-  const requestedModel = activeModels.find((model) =>
-    body.modelId ? model.id === body.modelId : model.name === body.modelName,
-  );
-  const requestedExternalModel =
-    body.modelName && !requestedModel
-      ? {
-          id: null,
-          name: body.modelName,
-          priority: 0,
-          max_tokens_limit: 4096,
-        }
-      : null;
-  const modelCandidates = uniqueBy<ModelRow>(
-    [
-      ...(requestedModel ? [requestedModel] : []),
-      ...(requestedExternalModel ? [requestedExternalModel] : []),
-      ...activeModels,
-    ],
-    (model) => model.name,
-  );
-
-  const requestedTokenSlot = activeTokenSlots.find((slot) =>
-    body.tokenSlotId ? slot.id === body.tokenSlotId : false,
-  );
-  const tokenCandidates = uniqueBy<TokenSlotRow>(
-    [...(requestedTokenSlot ? [requestedTokenSlot] : []), ...activeTokenSlots],
-    (slot) => slot.id,
-  );
-
   const attempts: AttemptLog[] = [];
   let lastPayload: unknown = null;
   let lastStatus = 500;
   const attemptTimeoutMs = clamp(body.attempt_timeout_ms ?? 25000, 3000, 60000);
   const startedAt = performance.now();
 
-  for (const model of modelCandidates) {
-    const maxTokens = Math.min(
-      body.max_tokens ?? 1024,
-      model.max_tokens_limit ?? 4096,
+  for (const currentProvider of providerCandidates) {
+    const config = providerConfigs[currentProvider];
+    const tokenMap = parseTokens(Deno.env.get(config.tokenMapSecret));
+    const hasNumberedToken = Array.from({ length: 20 }, (_, index) =>
+      Deno.env.get(`${config.tokenSecretPrefix}_${index + 1}`),
+    ).some(Boolean);
+
+    if (Object.keys(tokenMap).length === 0 && !hasNumberedToken) {
+      if (currentProvider === initialProvider && providerCandidates.length === 1) {
+        return jsonResponse(
+          {
+            error: `Missing ${config.tokenMapSecret} or ${config.tokenSecretPrefix}_N secret`,
+          },
+          500,
+        );
+      }
+      continue;
+    }
+
+    const [
+      { data: activeModels, error: modelError },
+      { data: activeTokenSlots, error: tokenSlotError },
+    ] = await Promise.all([
+      supabase
+        .from("ai_api_models")
+        .select("id, name, priority, max_tokens_limit")
+        .eq("provider", currentProvider)
+        .eq("active", true)
+        .order("priority", { ascending: true }),
+      supabase
+        .from("ai_api_token_slots")
+        .select("id, secret_name, display_name, priority")
+        .eq("provider", currentProvider)
+        .eq("active", true)
+        .order("priority", { ascending: true }),
+    ]);
+
+    if (modelError || !activeModels || activeModels.length === 0) {
+      if (currentProvider === initialProvider && providerCandidates.length === 1) {
+        return jsonResponse({ error: "No active model found" }, 404);
+      }
+      continue;
+    }
+
+    if (tokenSlotError || !activeTokenSlots || activeTokenSlots.length === 0) {
+      if (currentProvider === initialProvider && providerCandidates.length === 1) {
+        return jsonResponse({ error: "No active token slot found" }, 404);
+      }
+      continue;
+    }
+
+    const requestedModel = activeModels.find((model) =>
+      currentProvider === initialProvider
+        ? body.modelId ? model.id === body.modelId : model.name === body.modelName
+        : false,
+    );
+    const requestedExternalModel =
+      currentProvider === initialProvider && body.modelName && !requestedModel
+        ? {
+            id: null,
+            name: body.modelName,
+            priority: 0,
+            max_tokens_limit: 4096,
+          }
+        : null;
+    const modelCandidates = uniqueBy<ModelRow>(
+      [
+        ...(requestedModel ? [requestedModel] : []),
+        ...(requestedExternalModel ? [requestedExternalModel] : []),
+        ...activeModels,
+      ],
+      (model) => model.name,
     );
 
-    const providerPayload = {
-      model: model.name,
-      messages,
-      temperature: body.temperature ?? 0.2,
-      top_p: body.top_p ?? 0.7,
-      max_tokens: maxTokens,
-      stream: body.stream ?? false,
-    };
+    const requestedTokenSlot = activeTokenSlots.find((slot) =>
+      currentProvider === initialProvider && body.tokenSlotId
+        ? slot.id === body.tokenSlotId
+        : false,
+    );
+    const tokenCandidates = uniqueBy<TokenSlotRow>(
+      [...(requestedTokenSlot ? [requestedTokenSlot] : []), ...activeTokenSlots],
+      (slot) => slot.id,
+    );
 
-    let moveToNextModel = false;
-
-    for (const tokenSlot of tokenCandidates) {
-      const providerToken = resolveProviderToken(
-        provider,
-        tokenSlot.secret_name,
-        tokenSlot.priority,
-        tokenMap,
+    for (const model of modelCandidates) {
+      const maxTokens = Math.min(
+        body.max_tokens ?? 1024,
+        model.max_tokens_limit ?? 4096,
       );
 
-      if (!providerToken) {
+      const providerPayload = {
+        model: model.name,
+        messages,
+        temperature: body.temperature ?? 0.2,
+        top_p: body.top_p ?? 0.7,
+        max_tokens: maxTokens,
+        stream: body.stream ?? false,
+      };
+
+      let moveToNextModel = false;
+
+      for (const tokenSlot of tokenCandidates) {
+        const directKey =
+          currentProvider === initialProvider
+            ? req.headers.get("x-provider-api-key") ?? body.apiKey
+            : undefined;
+
+        const providerToken = resolveProviderToken(
+          currentProvider,
+          tokenSlot.secret_name,
+          tokenSlot.priority,
+          tokenMap,
+          directKey,
+        );
+
+        if (!providerToken) {
+          attempts.push({
+            provider: currentProvider,
+            model: model.name,
+            tokenSlot: tokenSlot.display_name,
+            status: "missing-secret",
+            reason: "token",
+            error: `Secret value not configured for ${tokenSlot.secret_name}`,
+          });
+          continue;
+        }
+
+        let providerResponse: Response;
+        let providerJson: ProviderPayload;
+        const attemptController = new AbortController();
+        const attemptTimer = setTimeout(
+          () => attemptController.abort(),
+          attemptTimeoutMs,
+        );
+
+        try {
+          providerResponse = await fetch(config.chatUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${providerToken}`,
+              ...(currentProvider === "openrouter"
+                ? {
+                    "HTTP-Referer": supabaseUrl,
+                    "X-Title": "AI APIs Supabase Console",
+                  }
+                : {}),
+            },
+            body: JSON.stringify(providerPayload),
+            signal: attemptController.signal,
+          });
+        } catch (error) {
+          const timedOut =
+            error instanceof DOMException && error.name === "AbortError";
+          const message = timedOut
+            ? `Attempt timed out after ${attemptTimeoutMs}ms`
+            : error instanceof Error
+              ? error.message
+              : "Provider network error";
+          attempts.push({
+            provider: currentProvider,
+            model: model.name,
+            tokenSlot: tokenSlot.display_name,
+            status: timedOut ? "timeout" : "network-error",
+            reason: timedOut ? "model" : "network",
+            error: message,
+          });
+          lastPayload = { error: message };
+          lastStatus = 502;
+          clearTimeout(attemptTimer);
+          if (timedOut) {
+            moveToNextModel = true;
+            break;
+          }
+          continue;
+        } finally {
+          clearTimeout(attemptTimer);
+        }
+
+        const providerText = await providerResponse.text();
+        try {
+          providerJson = JSON.parse(providerText) as ProviderPayload;
+        } catch {
+          providerJson = {
+            error: {
+              message: providerText || providerResponse.statusText,
+            },
+          };
+        }
+
+        lastPayload = providerJson;
+        lastStatus = providerResponse.status;
+
+        const assistantText =
+          providerJson?.choices?.[0]?.message?.content ??
+          providerJson?.error?.message ??
+          "";
+
+        if (providerResponse.ok) {
+          return jsonResponse({
+            provider: currentProvider,
+            model: model.name,
+            tokenSlot: tokenSlot.display_name,
+            content: assistantText,
+            usage: providerJson?.usage ?? null,
+            fallback: {
+              attempted: attempts.length + 1,
+              latencyMs: Math.round(performance.now() - startedAt),
+              attemptTimeoutMs,
+              switchedProvider: currentProvider !== initialProvider,
+              switchedFrom: currentProvider !== initialProvider ? initialProvider : undefined,
+              switchedModel:
+                Boolean(body.modelId || body.modelName) &&
+                model.name !== (body.modelName ?? requestedModel?.name),
+              switchedToken:
+                Boolean(body.tokenSlotId) && tokenSlot.id !== body.tokenSlotId,
+              attempts,
+            },
+          });
+        }
+
+        const failureReason = classifyFailure(
+          providerResponse.status,
+          errorText(providerJson, providerResponse.statusText),
+        );
         attempts.push({
+          provider: currentProvider,
           model: model.name,
           tokenSlot: tokenSlot.display_name,
-          status: "missing-secret",
-          reason: "token",
-          error: `Secret value not configured for ${tokenSlot.secret_name}`,
+          status: providerResponse.status,
+          reason: failureReason,
+          error: errorText(providerJson, providerResponse.statusText),
         });
-        continue;
-      }
 
-      let providerResponse: Response;
-      let providerJson: ProviderPayload;
-      const attemptController = new AbortController();
-      const attemptTimer = setTimeout(
-        () => attemptController.abort(),
-        attemptTimeoutMs,
-      );
-
-      try {
-        providerResponse = await fetch(config.chatUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${providerToken}`,
-            ...(provider === "openrouter"
-              ? {
-                  "HTTP-Referer": supabaseUrl,
-                  "X-Title": "AI APIs Supabase Console",
-                }
-              : {}),
-          },
-          body: JSON.stringify(providerPayload),
-          signal: attemptController.signal,
-        });
-      } catch (error) {
-        const timedOut =
-          error instanceof DOMException && error.name === "AbortError";
-        const message = timedOut
-          ? `Attempt timed out after ${attemptTimeoutMs}ms`
-          : error instanceof Error
-            ? error.message
-            : "Provider network error";
-        attempts.push({
-          model: model.name,
-          tokenSlot: tokenSlot.display_name,
-          status: timedOut ? "timeout" : "network-error",
-          reason: timedOut ? "model" : "network",
-          error: message,
-        });
-        lastPayload = { error: message };
-        lastStatus = 502;
-        clearTimeout(attemptTimer);
-        if (timedOut) {
+        if (failureReason === "model") {
           moveToNextModel = true;
           break;
         }
-        continue;
-      } finally {
-        clearTimeout(attemptTimer);
       }
 
-      const providerText = await providerResponse.text();
-      try {
-        providerJson = JSON.parse(providerText) as ProviderPayload;
-      } catch {
-        providerJson = {
-          error: {
-            message: providerText || providerResponse.statusText,
-          },
-        };
-      }
-
-      lastPayload = providerJson;
-      lastStatus = providerResponse.status;
-
-      const assistantText =
-        providerJson?.choices?.[0]?.message?.content ??
-        providerJson?.error?.message ??
-        "";
-
-      if (providerResponse.ok) {
-        return jsonResponse({
-          provider,
-          model: model.name,
-          tokenSlot: tokenSlot.display_name,
-          content: assistantText,
-          usage: providerJson?.usage ?? null,
-          fallback: {
-            attempted: attempts.length + 1,
-            latencyMs: Math.round(performance.now() - startedAt),
-            attemptTimeoutMs,
-            switchedModel:
-              Boolean(body.modelId || body.modelName) &&
-              model.name !== (body.modelName ?? requestedModel?.name),
-            switchedToken:
-              Boolean(body.tokenSlotId) && tokenSlot.id !== body.tokenSlotId,
-            attempts,
-          },
-        });
-      }
-
-      const failureReason = classifyFailure(
-        providerResponse.status,
-        errorText(providerJson, providerResponse.statusText),
-      );
-      attempts.push({
-        model: model.name,
-        tokenSlot: tokenSlot.display_name,
-        status: providerResponse.status,
-        reason: failureReason,
-        error: errorText(providerJson, providerResponse.statusText),
-      });
-
-      if (failureReason === "model") {
-        moveToNextModel = true;
-        break;
-      }
+      if (moveToNextModel) continue;
     }
-
-    if (moveToNextModel) continue;
   }
 
   return jsonResponse(
